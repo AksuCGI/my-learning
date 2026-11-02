@@ -348,7 +348,7 @@ document.addEventListener('click', (event) => {
     if (!button) return;
     const { action, id } = button.dataset;
     const readonly = activeView.startsWith('shared');
-    if (action === 'import') { if (!readonly) document.querySelector('#backup-file').click(); return; }
+    if (action === 'import') { document.querySelector('#backup-file').click(); return; }
     if (readonly && !['share', 'export', 'expand'].includes(action)) return;
     if (action === 'add' || action === 'edit-entry') openEntry(id);
     if (action === 'edit-topic' || action === 'add-topic') openTopic(id);
