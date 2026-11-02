@@ -17,6 +17,50 @@ const today = () => { const date = new Date(); return `${date.getFullYear()}-${S
 function validState(value) {
     return value && Array.isArray(value.topics) && value.topics.every((topic) => typeof topic.id === 'string' && typeof topic.name === 'string' && typeof topic.goal === 'string' && Object.hasOwn(images, topic.category) && /^\d{4}-\d{2}-\d{2}$/.test(topic.start)) && Array.isArray(value.entries) && value.entries.every((entry) => typeof entry.id === 'string' && (entry.topic === '' || value.topics.some((topic) => topic.id === entry.topic)) && Number.isFinite(entry.duration) && entry.duration > 0 && /^\d{4}-\d{2}-\d{2}$/.test(entry.date) && ['studied', 'learned', 'notes', 'questions', 'evidence', 'evidenceUrl', 'next'].every((field) => typeof entry[field] === 'string'));
 }
+function isIsoDate(value) {
+    return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value) && new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) === value;
+}
+function parseBackup(value) {
+    if (!value || value.formatVersion !== 1 || !Array.isArray(value.topics) || !Array.isArray(value.entries) || !Array.isArray(value.schedule)) throw new Error('This is not a supported learning journal backup.');
+    const fiscalYear = value.fiscalYear;
+    if (!fiscalYear || !isIsoDate(fiscalYear.start) || !isIsoDate(fiscalYear.end) || fiscalYear.end < fiscalYear.start) throw new Error('The backup has an invalid fiscal year.');
+    const topicIds = new Set();
+    for (const topic of value.topics) {
+        if (!topic || typeof topic.id !== 'string' || !topic.id || topicIds.has(topic.id) || typeof topic.name !== 'string' || !topic.name.trim() || typeof topic.goal !== 'string' || !Object.hasOwn(images, topic.category) || !isIsoDate(topic.start) || !['high', 'medium', 'low'].includes(topic.priority)) throw new Error('The backup has an invalid or duplicate learning goal.');
+        topicIds.add(topic.id);
+    }
+    const entryIds = new Set();
+    const entryFields = ['studied', 'learned', 'notes', 'questions', 'evidence', 'evidenceUrl', 'next'];
+    for (const entry of value.entries) {
+        if (!entry || typeof entry.id !== 'string' || !entry.id || entryIds.has(entry.id) || (entry.topic !== '' && !topicIds.has(entry.topic)) || !Number.isInteger(entry.duration) || entry.duration <= 0 || !isIsoDate(entry.date) || entryFields.some((field) => typeof entry[field] !== 'string') || (entry.scheduleId !== undefined && typeof entry.scheduleId !== 'string')) throw new Error('The backup has an invalid or duplicate learning entry.');
+        entryIds.add(entry.id);
+    }
+    if (!value.schedule.every((block) => validBlock(block, value.topics))) throw new Error('The backup has an invalid weekly schedule.');
+    const imported = {
+        sampleGoalsRemoved: true,
+        fiscalYear: { start: fiscalYear.start, end: fiscalYear.end },
+        topics: value.topics.map((topic) => ({ id: topic.id, name: topic.name, category: topic.category, goal: topic.goal, start: topic.start, priority: topic.priority })),
+        entries: value.entries.map((entry) => ({ id: entry.id, scheduleId: entry.scheduleId || '', date: entry.date, duration: entry.duration, topic: entry.topic, ...Object.fromEntries(entryFields.map((field) => [field, entry[field]])) })),
+        schedule: value.schedule.map((block) => ({ id: block.id, kind: block.kind, topic: block.topic, title: block.title, date: block.date, start: block.start, duration: block.duration, notes: block.notes, status: block.status, entryId: block.entryId || '' })),
+    };
+    if (!validState(imported)) throw new Error('The backup data is incomplete or inconsistent.');
+    return imported;
+}
+async function importBackup(file) {
+    if (!file) return;
+    if (file.size > 5_000_000) { notify('Backup file is too large to import.'); return; }
+    let imported;
+    try { imported = parseBackup(JSON.parse(await file.text())); }
+    catch (error) { notify(error instanceof SyntaxError ? 'The selected file is not valid JSON.' : error.message); return; }
+    const summary = `${imported.topics.length} goals, ${imported.entries.length} learning entries, and ${imported.schedule.length} scheduled blocks`;
+    if (!confirm(`Replace the journal saved in this browser with the backup containing ${summary}? This cannot be undone.`)) return;
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(imported)); }
+    catch { notify('Could not save the imported backup in this browser.'); return; }
+    state = imported;
+    selectedWeek = mondayOf(today());
+    render();
+    notify(`Imported ${summary}.`);
+}
 function removeSampleGoals(saved) {
     if (saved.sampleGoalsRemoved) return saved;
     const sampleTopics = new Set(['ai', 'design', 'communication']);
@@ -304,6 +348,7 @@ document.addEventListener('click', (event) => {
     if (!button) return;
     const { action, id } = button.dataset;
     const readonly = activeView.startsWith('shared');
+    if (action === 'import') { if (!readonly) document.querySelector('#backup-file').click(); return; }
     if (readonly && !['share', 'export', 'expand'].includes(action)) return;
     if (action === 'add' || action === 'edit-entry') openEntry(id);
     if (action === 'edit-topic' || action === 'add-topic') openTopic(id);
@@ -321,6 +366,12 @@ document.addEventListener('click', (event) => {
     if (action === 'export') exportSnapshot();
     if (action === 'expand') { const details = button.closest('.entry').querySelector('.entry-details'); details.hidden = !details.hidden; button.setAttribute('aria-expanded', String(!details.hidden)); button.innerHTML = details.hidden ? 'Read entry <span>↗</span>' : 'Less <span>−</span>'; }
     if (action === 'delete-entry' && confirm('Delete this learning entry? This cannot be undone.')) { state.entries = state.entries.filter((entry) => entry.id !== id); state.schedule.forEach((block) => { if (block.entryId === id) { block.entryId = ''; block.status = 'planned'; } }); const saved = persist(); render(); if (saved) notify('Learning entry deleted. Its time block is planned again.'); }
+});
+document.querySelector('#backup-file').addEventListener('change', async (event) => {
+    const input = event.currentTarget;
+    const [file] = input.files;
+    await importBackup(file);
+    input.value = '';
 });
 document.addEventListener('input', (event) => { if (event.target.id === 'search') filterTimeline(); if (['hours', 'minutes'].includes(event.target.name)) document.querySelector('#entry-form').elements.minutes.setCustomValidity(''); });
 document.addEventListener('change', (event) => {
