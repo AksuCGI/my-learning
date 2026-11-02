@@ -35,13 +35,14 @@ function parseBackup(value) {
         if (!entry || typeof entry.id !== 'string' || !entry.id || entryIds.has(entry.id) || (entry.topic !== '' && !topicIds.has(entry.topic)) || !Number.isInteger(entry.duration) || entry.duration <= 0 || !isIsoDate(entry.date) || entryFields.some((field) => typeof entry[field] !== 'string') || (entry.scheduleId !== undefined && typeof entry.scheduleId !== 'string')) throw new Error('The backup has an invalid or duplicate learning entry.');
         entryIds.add(entry.id);
     }
-    if (!value.schedule.every((block) => validBlock(block, value.topics))) throw new Error('The backup has an invalid weekly schedule.');
+    const schedule = value.schedule.map((block) => block?.kind === 'buffer' ? { ...block, kind: 'meeting' } : block);
+    if (!schedule.every((block) => validBlock(block, value.topics))) throw new Error('The backup has an invalid weekly schedule.');
     const imported = {
         sampleGoalsRemoved: true,
         fiscalYear: { start: fiscalYear.start, end: fiscalYear.end },
         topics: value.topics.map((topic) => ({ id: topic.id, name: topic.name, category: topic.category, goal: topic.goal, start: topic.start, priority: topic.priority })),
         entries: value.entries.map((entry) => ({ id: entry.id, scheduleId: entry.scheduleId || '', date: entry.date, duration: entry.duration, topic: entry.topic, ...Object.fromEntries(entryFields.map((field) => [field, entry[field]])) })),
-        schedule: value.schedule.map((block) => ({ id: block.id, kind: block.kind, topic: block.topic, title: block.title, date: block.date, start: block.start, duration: block.duration, notes: block.notes, status: block.status, entryId: block.entryId || '' })),
+        schedule: schedule.map((block) => ({ id: block.id, kind: block.kind, topic: block.topic, title: block.title, date: block.date, start: block.start, duration: block.duration, notes: block.notes, status: block.status, entryId: block.entryId || '' })),
     };
     if (!validState(imported)) throw new Error('The backup data is incomplete or inconsistent.');
     return imported;
@@ -107,7 +108,7 @@ function upgradeState(saved) {
             goal.goal = goal.goal.replace(/\n\nThe planning time budget is not a billable-hours target\./g, '');
             return goal;
         }),
-        schedule: Array.isArray(saved.schedule) ? saved.schedule.filter((block) => validBlock(block, saved.topics)) : [],
+        schedule: Array.isArray(saved.schedule) ? saved.schedule.map((block) => block?.kind === 'buffer' ? { ...block, kind: 'meeting' } : block).filter((block) => validBlock(block, saved.topics)) : [],
     };
 }
 let state = upgradeState(loadState());
@@ -212,7 +213,7 @@ function endTime(block) {
     return `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
 }
 function validBlock(block, topics) {
-    return block && typeof block.id === 'string' && ['learning', 'task', 'buffer'].includes(block.kind) && typeof block.title === 'string' && typeof block.notes === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(block.date) && /^([01]\d|2[0-3]):[0-5]\d$/.test(block.start) && Number.isInteger(block.duration) && block.duration > 0 && timeMinutes(block.start) + block.duration <= 1440 && ['planned', 'done'].includes(block.status) && (block.kind !== 'learning' || block.topic === '' || topics.some((topic) => topic.id === block.topic));
+    return block && typeof block.id === 'string' && ['learning', 'task', 'meeting'].includes(block.kind) && typeof block.title === 'string' && typeof block.notes === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(block.date) && /^([01]\d|2[0-3]):[0-5]\d$/.test(block.start) && Number.isInteger(block.duration) && block.duration > 0 && timeMinutes(block.start) + block.duration <= 1440 && ['planned', 'done'].includes(block.status) && (block.kind !== 'learning' || block.topic === '' || topics.some((topic) => topic.id === block.topic));
 }
 function weekBlocks(week = selectedWeek) {
     return state.schedule.filter((block) => block.date >= week && block.date <= addDays(week, 4)).sort((first, second) => `${first.date}${first.start}`.localeCompare(`${second.date}${second.start}`));
@@ -222,7 +223,7 @@ function overlappingBlock(candidate, blocks = state.schedule) {
 }
 function blockMarkup(block) {
     const topic = topicById(block.topic) || { name: 'Unassigned learning' };
-    const kind = { learning: 'Learning', task: 'Task', buffer: 'Buffer' }[block.kind];
+    const kind = { learning: 'Learning', task: 'Task', meeting: 'Meeting' }[block.kind];
     return `<article class="plan-block ${block.kind} ${block.status === 'done' ? 'is-done' : ''}"><div class="block-top"><span>${escapeHtml(block.start)} – ${endTime(block)}</span><div><button class="icon-button" data-action="edit-block" data-id="${escapeHtml(block.id)}" aria-label="Edit ${escapeHtml(block.title)}" title="Edit or move block">↗</button><button class="icon-button" data-action="delete-block" data-id="${escapeHtml(block.id)}" aria-label="Delete ${escapeHtml(block.title)}" title="Delete time block">×</button></div></div><span class="block-kind">${kind}${block.status === 'done' ? ' · Done' : ''}</span><h3>${escapeHtml(block.title)}</h3>${block.kind === 'learning' ? `<p>${escapeHtml(topic.name)}</p>` : ''}${block.notes ? `<p class="block-notes">${escapeHtml(block.notes)}</p>` : ''}<div class="block-bottom"><span>${durationLabel(block.duration)}</span>${block.kind === 'learning' ? `<button class="text-button" data-action="complete-learning" data-id="${escapeHtml(block.id)}">${block.entryId && state.entries.some((entry) => entry.id === block.entryId) ? 'View entry ↗' : 'Log learning ↗'}</button>` : `<button class="text-button" data-action="toggle-task" data-id="${escapeHtml(block.id)}">${block.status === 'done' ? 'Reopen' : 'Mark done'}</button>`}</div></article>`;
 }
 function weeklyGoalMarkup() {
@@ -239,9 +240,9 @@ function plannerMarkup() {
     const blocks = weekBlocks();
     const learning = blocks.filter((block) => block.kind === 'learning').reduce((sum, block) => sum + block.duration, 0);
     const tasks = blocks.filter((block) => block.kind === 'task').reduce((sum, block) => sum + block.duration, 0);
-    const buffer = blocks.filter((block) => block.kind === 'buffer').reduce((sum, block) => sum + block.duration, 0);
+    const meetings = blocks.filter((block) => block.kind === 'meeting').reduce((sum, block) => sum + block.duration, 0);
     const logged = state.entries.filter((entry) => entry.date >= selectedWeek && entry.date <= addDays(selectedWeek, 4)).reduce((sum, entry) => sum + entry.duration, 0);
-    return `<div class="page-heading"><div><span class="eyebrow">${fiscalLabel()}</span><h1>A week with intention</h1><p class="subtitle">Learning, everyday work, and a little breathing room.</p></div><div class="heading-actions"><button class="button secondary" data-action="copy-week">Copy to next week ↗</button><button class="button primary" data-action="add-block">+ Add time block</button></div></div><div class="week-toolbar"><div class="week-navigation"><button class="icon-button" data-action="previous-week" aria-label="Previous week" title="Previous week">←</button><h2>${dateLabel(selectedWeek)} – ${dateLabel(addDays(selectedWeek, 4), { day: 'numeric', month: 'short', year: 'numeric' })}</h2><button class="icon-button" data-action="next-week" aria-label="Next week" title="Next week">→</button></div><div class="week-picker"><button class="text-button" data-action="this-week">This week</button><label>Week of<input id="week-date" type="date" value="${selectedWeek}" aria-label="Choose week"></label></div></div><section class="plan-totals" aria-label="Week totals"><span><i class="legend-dot learning-dot"></i><strong>${durationLabel(learning)}</strong> learning scheduled</span><span><i class="legend-dot task-dot"></i><strong>${durationLabel(tasks)}</strong> tasks</span><span><i class="legend-dot buffer-dot"></i><strong>${durationLabel(buffer)}</strong> buffer</span><span><strong>${durationLabel(logged)}</strong> learning logged</span></section><section class="week-grid" aria-label="Weekly schedule">${Array.from({ length: 5 }, (_, index) => {
+    return `<div class="page-heading"><div><span class="eyebrow">${fiscalLabel()}</span><h1>A week with intention</h1><p class="subtitle">Learning, everyday work, and customer and team conversations.</p></div><div class="heading-actions"><button class="button secondary" data-action="copy-week">Copy to next week ↗</button><button class="button primary" data-action="add-block">+ Add time block</button></div></div><div class="week-toolbar"><div class="week-navigation"><button class="icon-button" data-action="previous-week" aria-label="Previous week" title="Previous week">←</button><h2>${dateLabel(selectedWeek)} – ${dateLabel(addDays(selectedWeek, 4), { day: 'numeric', month: 'short', year: 'numeric' })}</h2><button class="icon-button" data-action="next-week" aria-label="Next week" title="Next week">→</button></div><div class="week-picker"><button class="text-button" data-action="this-week">This week</button><label>Week of<input id="week-date" type="date" value="${selectedWeek}" aria-label="Choose week"></label></div></div><section class="plan-totals" aria-label="Week totals"><span><i class="legend-dot learning-dot"></i><strong>${durationLabel(learning)}</strong> learning scheduled</span><span><i class="legend-dot task-dot"></i><strong>${durationLabel(tasks)}</strong> tasks</span><span><i class="legend-dot meeting-dot"></i><strong>${durationLabel(meetings)}</strong> meetings</span><span><strong>${durationLabel(logged)}</strong> learning logged</span></section><section class="week-grid" aria-label="Weekly schedule">${Array.from({ length: 5 }, (_, index) => {
         const date = addDays(selectedWeek, index);
         const dayBlocks = blocks.filter((block) => block.date === date);
         return `<section class="plan-day ${date === today() ? 'is-today' : ''}"><div class="day-heading"><div><span>${dateLabel(date, { weekday: 'short' })}</span><h2>${dateLabel(date)}</h2></div><button class="icon-button" data-action="add-block" data-date="${date}" aria-label="Add block on ${dateLabel(date)}" title="Add time block">+</button></div><div class="day-blocks">${dayBlocks.map(blockMarkup).join('') || '<p class="day-empty">Room to plan</p>'}</div></section>`;
@@ -270,11 +271,11 @@ function openBlock(id, date, topicId) {
 }
 function copyWeek() {
     const source = weekBlocks().filter((block) => block.kind !== 'task');
-    if (!source.length) { notify('Add learning or buffer blocks before copying this week.'); return; }
+    if (!source.length) { notify('Add learning or meeting blocks before copying this week.'); return; }
     const copies = source.map((block) => ({ ...block, id: crypto.randomUUID(), date: addDays(block.date, 7), status: 'planned', entryId: '' }));
     const collision = copies.find((block) => overlappingBlock(block, [...state.schedule, ...copies]));
     if (collision) { notify(`Cannot copy: a block overlaps on ${dateLabel(collision.date)}. Move it first.`); return; }
-    if (!confirm(`Copy ${copies.length} learning / buffer blocks to next week? Tasks will not be copied.`)) return;
+    if (!confirm(`Copy ${copies.length} learning / meeting blocks to next week? Tasks will not be copied.`)) return;
     state.schedule.push(...copies);
     selectedWeek = addDays(selectedWeek, 7);
     const saved = persist(); render(); if (saved) notify('Week copied. Each time block can be adjusted independently.');

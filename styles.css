@@ -188,7 +188,7 @@ label:has(> :required:enabled)>.field-label::after {
     background: var(--red);
 }
 
-.buffer-dot {
+.meeting-dot {
     background: #4a8b7b;
 }
 
@@ -259,7 +259,7 @@ label:has(> :required:enabled)>.field-label::after {
     border-left-color: var(--red);
 }
 
-.plan-block.buffer {
+.plan-block.meeting {
     background: #edf5f2;
     border-color: #d7e9e3;
     border-left-color: #4a8b7b;
