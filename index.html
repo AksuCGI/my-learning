@@ -177,6 +177,21 @@
                     class="button primary">Save time block</button></div>
         </form>
     </dialog>
+    <dialog id="weekly-goal-dialog" aria-labelledby="weekly-goal-title">
+        <form id="weekly-goal-form">
+            <div class="dialog-heading">
+                <h2 id="weekly-goal-title">Add weekly goal</h2>
+                <button type="button" class="icon-button close-dialog" aria-label="Close">×</button>
+            </div>
+            <input name="week" type="hidden">
+            <label><span class="field-label">Goal or reminder</span><textarea name="goal" rows="4"
+                    required></textarea></label>
+            <div class="dialog-actions">
+                <button type="button" class="button secondary close-dialog">Cancel</button>
+                <button type="submit" class="button primary">Save weekly goal</button>
+            </div>
+        </form>
+    </dialog>
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
 </body>
 

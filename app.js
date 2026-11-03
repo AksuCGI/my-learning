@@ -21,6 +21,9 @@ function validState(value) {
 function isIsoDate(value) {
     return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value) && new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) === value;
 }
+function validWeeklyGoals(value) {
+    return value !== null && typeof value === 'object' && !Array.isArray(value) && Object.entries(value).every(([week, goals]) => /^\d{4}-\d{2}-\d{2}$/.test(week) && !Number.isNaN(Date.parse(`${week}T12:00:00`)) && isIsoDate(week) && mondayOf(week) === week && typeof goals === 'string');
+}
 function parseBackup(value) {
     if (!value || value.formatVersion !== 1 || !Array.isArray(value.topics) || !Array.isArray(value.entries) || !Array.isArray(value.schedule)) throw new Error('This is not a supported learning journal backup.');
     const fiscalYear = value.fiscalYear;
@@ -38,8 +41,10 @@ function parseBackup(value) {
     }
     const schedule = value.schedule.map((block) => block?.kind === 'buffer' ? { ...block, kind: 'meeting' } : block);
     if (!schedule.every((block) => validBlock(block, value.topics))) throw new Error('The backup has an invalid weekly schedule.');
+    if (value.weeklyGoals !== undefined && !validWeeklyGoals(value.weeklyGoals)) throw new Error('The backup has invalid weekly goals.');
     const imported = {
         sampleGoalsRemoved: true,
+        weeklyGoals: { ...(value.weeklyGoals || {}) },
         fiscalYear: { start: fiscalYear.start, end: fiscalYear.end },
         topics: value.topics.map((topic) => ({ id: topic.id, name: topic.name, category: topic.category, goal: topic.goal, start: topic.start, priority: topic.priority })),
         entries: value.entries.map((entry) => ({ id: entry.id, scheduleId: entry.scheduleId || '', date: entry.date, duration: entry.duration, topic: entry.topic, ...Object.fromEntries(entryFields.map((field) => [field, entry[field]])) })),
@@ -102,6 +107,7 @@ function upgradeState(saved) {
     return {
         ...saved,
         fiscalYear: validYear ? fiscalYear : defaultFiscalYear(),
+        weeklyGoals: validWeeklyGoals(saved.weeklyGoals) ? { ...saved.weeklyGoals } : {},
         topics: saved.topics.map((topic) => {
             const goal = { ...topic };
             ['progress', 'targetHours', 'weeklyHours', 'target'].forEach((field) => delete goal[field]);
@@ -262,13 +268,29 @@ function weeklyGoalMarkup() {
         return `<div class="weekly-goal-row"><span><strong>${escapeHtml(topic.name)}</strong><small>${escapeHtml(topic.priority)} priority</small></span><span>${durationLabel(scheduled)}</span><span>${durationLabel(logged)}</span><span>${durationLabel(topicTime(topic.id))}</span><button class="text-button" data-action="plan-topic" data-id="${escapeHtml(topic.id)}">+ Plan</button></div>`;
     }).join('')}</div>`;
 }
+function weeklyGoalsMarkup() {
+    const goal = state.weeklyGoals[selectedWeek] || '';
+    return `<section class="weekly-notes" aria-labelledby="weekly-goals-heading"><div class="section-heading"><h2 id="weekly-goals-heading">Weekly goals</h2>${goal ? `<div class="weekly-note-actions"><button class="icon-button" data-action="edit-weekly-goal" aria-label="Edit weekly goal" title="Edit weekly goal">${editIcon}</button><button class="icon-button" data-action="delete-weekly-goal" aria-label="Delete weekly goal" title="Delete weekly goal">×</button></div>` : '<button class="button secondary" data-action="add-weekly-goal">+ Add weekly goal</button>'}</div>${goal ? `<p class="weekly-note-text">${escapeHtml(goal)}</p>` : ''}</section>`;
+}
+function saveWeeklyGoals(text, week = selectedWeek) {
+    if (text.trim()) state.weeklyGoals[week] = text;
+    else delete state.weeklyGoals[week];
+    return persist();
+}
+function openWeeklyGoal() {
+    const form = document.querySelector('#weekly-goal-form');
+    form.elements.week.value = selectedWeek;
+    form.elements.goal.value = state.weeklyGoals[selectedWeek] || '';
+    document.querySelector('#weekly-goal-title').textContent = form.elements.goal.value ? 'Edit weekly goal' : 'Add weekly goal';
+    document.querySelector('#weekly-goal-dialog').showModal();
+}
 function plannerMarkup() {
     const blocks = weekBlocks();
     const learning = blocks.filter((block) => block.kind === 'learning').reduce((sum, block) => sum + block.duration, 0);
     const tasks = blocks.filter((block) => block.kind === 'task').reduce((sum, block) => sum + block.duration, 0);
     const meetings = blocks.filter((block) => block.kind === 'meeting').reduce((sum, block) => sum + block.duration, 0);
     const logged = state.entries.filter((entry) => entry.date >= selectedWeek && entry.date <= addDays(selectedWeek, 4)).reduce((sum, entry) => sum + entry.duration, 0);
-    return `<div class="page-heading"><div><span class="eyebrow">${fiscalLabel()}</span><h1>A week with intention</h1><p class="subtitle">Learning, everyday work, and customer and team conversations.</p></div><div class="heading-actions"><button class="button primary" data-action="add-block">+ Add time block</button></div></div><div class="week-toolbar"><div class="week-navigation"><button class="icon-button" data-action="previous-week" aria-label="Previous week" title="Previous week">←</button><h2>${dateLabel(selectedWeek)} – ${dateLabel(addDays(selectedWeek, 4), { day: 'numeric', month: 'short', year: 'numeric' })}</h2><button class="icon-button" data-action="next-week" aria-label="Next week" title="Next week">→</button></div><div class="week-picker"><button class="text-button" data-action="this-week">This week</button><label>Week of<input id="week-date" type="date" value="${selectedWeek}" aria-label="Choose week"></label></div></div><section class="plan-totals" aria-label="Week totals"><span><i class="legend-dot learning-dot"></i><strong>${durationLabel(learning)}</strong> learning scheduled</span><span><i class="legend-dot task-dot"></i><strong>${durationLabel(tasks)}</strong> tasks</span><span><i class="legend-dot meeting-dot"></i><strong>${durationLabel(meetings)}</strong> meetings</span><span><strong>${durationLabel(logged)}</strong> learning logged</span></section><section class="week-grid" aria-label="Weekly schedule">${Array.from({ length: 5 }, (_, index) => {
+    return `<div class="page-heading"><div><span class="eyebrow">${fiscalLabel()}</span><h1>A week with intention</h1><p class="subtitle">Learning, everyday work, and customer and team conversations.</p></div><div class="heading-actions"><button class="button primary" data-action="add-block">+ Add time block</button></div></div><div class="week-toolbar"><div class="week-navigation"><button class="icon-button" data-action="previous-week" aria-label="Previous week" title="Previous week">←</button><h2>${dateLabel(selectedWeek)} – ${dateLabel(addDays(selectedWeek, 4), { day: 'numeric', month: 'short', year: 'numeric' })}</h2><button class="icon-button" data-action="next-week" aria-label="Next week" title="Next week">→</button></div><div class="week-picker"><button class="text-button" data-action="this-week">This week</button><label>Week of<input id="week-date" type="date" value="${selectedWeek}" aria-label="Choose week"></label></div></div>${weeklyGoalsMarkup()}<section class="plan-totals" aria-label="Week totals"><span><i class="legend-dot learning-dot"></i><strong>${durationLabel(learning)}</strong> learning scheduled</span><span><i class="legend-dot task-dot"></i><strong>${durationLabel(tasks)}</strong> tasks</span><span><i class="legend-dot meeting-dot"></i><strong>${durationLabel(meetings)}</strong> meetings</span><span><strong>${durationLabel(logged)}</strong> learning logged</span></section><section class="week-grid" aria-label="Weekly schedule">${Array.from({ length: 5 }, (_, index) => {
         const date = addDays(selectedWeek, index);
         const dayBlocks = blocks.filter((block) => block.date === date);
         return `<section class="plan-day ${date === today() ? 'is-today' : ''}"><div class="day-heading"><div><span>${dateLabel(date, { weekday: 'short' })}</span><h2>${dateLabel(date)}</h2></div><button class="icon-button" data-action="add-block" data-date="${date}" aria-label="Add block on ${dateLabel(date)}" title="Add time block">+</button></div><div class="day-blocks">${dayBlocks.map(blockMarkup).join('') || '<p class="day-empty">Room to plan</p>'}</div></section>`;
@@ -387,6 +409,8 @@ document.addEventListener('click', (event) => {
     if (action === 'log-topic') { openEntry(); document.querySelector('#entry-form').elements.topic.value = id; }
     if (action === 'plan-topic') openBlock(undefined, undefined, id);
     if (action === 'add-block' || action === 'edit-block') openBlock(id, button.dataset.date);
+    if (action === 'add-weekly-goal' || action === 'edit-weekly-goal') openWeeklyGoal();
+    if (action === 'delete-weekly-goal' && confirm('Delete this week’s goal?')) { const saved = saveWeeklyGoals(''); render(); if (saved) notify('Weekly goal deleted.'); }
     if (action === 'previous-week' || action === 'next-week') { selectedWeek = addDays(selectedWeek, action === 'previous-week' ? -7 : 7); render(); }
     if (action === 'this-week') { selectedWeek = mondayOf(today()); render(); }
     if (action === 'complete-learning') openEntry(undefined, id);
@@ -403,6 +427,15 @@ document.querySelector('#backup-file').addEventListener('change', async (event) 
     const [file] = input.files;
     await importBackup(file);
     input.value = '';
+});
+document.querySelector('#weekly-goal-form').addEventListener('submit', (event) => {
+    event.preventDefault();
+    const values = Object.fromEntries(new FormData(event.target));
+    if (!values.goal.trim()) { notify('Write a weekly goal or reminder.'); return; }
+    const saved = saveWeeklyGoals(values.goal.trim(), values.week);
+    document.querySelector('#weekly-goal-dialog').close();
+    render();
+    if (saved) notify('Weekly goal saved.');
 });
 document.addEventListener('input', (event) => { if (event.target.id === 'search') filterTimeline(); if (['hours', 'minutes'].includes(event.target.name)) document.querySelector('#entry-form').elements.minutes.setCustomValidity(''); });
 document.addEventListener('change', (event) => {

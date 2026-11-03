@@ -5,7 +5,8 @@ const vm = require('node:vm');
 const { randomUUID } = require('node:crypto');
 
 const source = readFileSync(`${__dirname}/app.js`, 'utf8');
-function journal() {
+function journal(saved = null) {
+    let stored = saved ? JSON.stringify(saved) : null;
     const handlers = new Map();
     const elements = new Map();
     const document = {
@@ -18,11 +19,11 @@ function journal() {
             return elements.get(selector);
         },
         querySelectorAll: () => [],
-        addEventListener() { },
+        addEventListener(type, handler) { handlers.set(`document:${type}`, handler); },
     };
     const context = vm.createContext({
         document, crypto: { randomUUID }, structuredClone, URL,
-        localStorage: { getItem: () => null, setItem() { } }, location: { hash: '#planner' },
+        localStorage: { getItem: () => stored, setItem(key, value) { stored = value; } }, location: { hash: '#planner' },
         window: { addEventListener() { } }, requestAnimationFrame() { }, setTimeout() { }, clearTimeout() { },
         FormData: class { constructor(form) { return Object.entries(form.values); } },
     });
@@ -31,6 +32,8 @@ function journal() {
         run: (code) => vm.runInContext(code, context),
         dates: (start, end, frequency) => Array.from(vm.runInContext(`repeatDates('${start}', '${end}', '${frequency}')`, context)),
         submit: (values) => handlers.get('#schedule-form:submit')({ preventDefault() { }, target: { values } }),
+        inputGoals: (value) => handlers.get('#weekly-goal-form:submit')({ preventDefault() { }, target: { values: { goal: value, week: vm.runInContext('selectedWeek', context) } } }),
+        stored: () => JSON.parse(stored),
         elements,
     };
 }
@@ -105,4 +108,63 @@ test('editing one occurrence does not change its siblings or duplicate it', () =
     app.submit(values({ id, repeat: 'none', title: 'Changed' }));
     assert.equal(app.run('state.schedule.length'), 3);
     assert.equal(app.run('state.schedule.filter(block => block.title === "Changed").length'), 1);
+});
+
+test('weekly goals save multiple lines from the dialog and survive a reload', () => {
+    const app = journal();
+    app.run('selectedWeek = "2026-11-02"');
+    app.inputGoals('Finish module 2\nPrepare the team demo');
+    const reloaded = journal(app.stored());
+    assert.equal(reloaded.run('state.weeklyGoals["2026-11-02"]'), 'Finish module 2\nPrepare the team demo');
+    assert.equal(reloaded.run('state.entries.length'), 0);
+    assert.equal(reloaded.run('state.schedule.length'), 0);
+});
+test('weekly goals stay separate when navigating and clearing a week', () => {
+    const app = journal();
+    app.run('selectedWeek = "2026-11-02"');
+    app.inputGoals('First week');
+    app.run('selectedWeek = "2026-11-09"');
+    assert.doesNotMatch(app.run('weeklyGoalsMarkup()'), /First week/);
+    app.inputGoals('Second week');
+    app.run('selectedWeek = "2026-11-02"');
+    assert.match(app.run('weeklyGoalsMarkup()'), /First week/);
+    app.run('saveWeeklyGoals("")');
+    assert.equal(app.run('state.weeklyGoals["2026-11-02"]'), undefined);
+    assert.equal(app.stored().weeklyGoals['2026-11-09'], 'Second week');
+});
+test('weekly goals are safely escaped in the reminder markup', () => {
+    const app = journal();
+    app.inputGoals('</textarea><script>alert("test")</script>');
+    const markup = app.run('weeklyGoalsMarkup()');
+    assert.doesNotMatch(markup, /<script>/);
+    assert.match(markup, /&lt;\/textarea&gt;/);
+});
+test('backup import preserves weekly goals and accepts older backups', () => {
+    const app = journal();
+    app.run('selectedWeek = "2026-11-02"');
+    app.inputGoals('Complete the prototype');
+    assert.equal(app.run('parseBackup({ ...state, formatVersion: 1 }).weeklyGoals["2026-11-02"]'), 'Complete the prototype');
+    assert.equal(app.run('Object.keys(parseBackup({ ...state, formatVersion: 1, weeklyGoals: undefined }).weeklyGoals).length'), 0);
+    assert.throws(() => app.run('parseBackup({ ...state, formatVersion: 1, weeklyGoals: { "2026-11-03": "Not a Monday" } })'));
+    assert.equal(app.run('Object.keys(upgradeState({ ...state, weeklyGoals: undefined }).weeklyGoals).length'), 0);
+});
+
+test('weekly goals appear above the schedule as reminders with add and edit actions', () => {
+    const app = journal();
+    let markup = app.run('plannerMarkup()');
+    assert.ok(markup.indexOf('class="weekly-notes"') < markup.indexOf('class="week-grid"'));
+    assert.match(markup, /data-action="add-weekly-goal"/);
+    assert.doesNotMatch(markup, /<textarea/);
+    app.inputGoals('Prepare the team demo');
+    markup = app.run('plannerMarkup()');
+    assert.match(markup, /class="weekly-note-text">Prepare the team demo/);
+    assert.match(markup, /data-action="edit-weekly-goal"/);
+    assert.match(markup, /data-action="delete-weekly-goal"/);
+    assert.doesNotMatch(markup, /<textarea/);
+});
+test('blank weekly goal submissions do not overwrite the saved reminder', () => {
+    const app = journal();
+    app.inputGoals('Finish the prototype');
+    app.inputGoals('   ');
+    assert.equal(app.run('state.weeklyGoals[selectedWeek]'), 'Finish the prototype');
 });

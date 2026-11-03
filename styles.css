@@ -338,6 +338,28 @@ label:has(> :required:enabled)>.field-label::after {
     margin-top: 35px;
 }
 
+.weekly-notes {
+    padding: 18px 0;
+    border-bottom: 1px solid var(--border);
+}
+
+.weekly-notes .section-heading {
+    flex-wrap: wrap;
+    gap: 12px;
+    margin: 0;
+}
+
+.weekly-note-actions {
+    display: flex;
+    gap: 6px;
+}
+
+.weekly-note-text {
+    margin-top: 12px;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
 .weekly-goals {
     border-top: 1px solid var(--border);
 }
