@@ -396,6 +396,31 @@ function exportSnapshot() {
     const link = document.createElement('a'); link.href = url; link.download = `learning-journal-${today()}.html`; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
     notify('Read-only snapshot downloaded. Share the HTML file with your reviewer.');
 }
+function exportJSON() {
+    try {
+        const backup = {
+            formatVersion: 1,
+            exportedAt: today(),
+            sampleGoalsRemoved: true,
+            fiscalYear: state.fiscalYear,
+            topics: state.topics,
+            entries: state.entries,
+            schedule: state.schedule,
+            weeklyGoals: state.weeklyGoals || {}
+        };
+        const jsonString = JSON.stringify(backup, null, 2);
+        const blob = new Blob([jsonString], { type: 'application/json;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `learning-journal-backup-${today()}.json`;
+        link.click();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+        notify('✓ Your journal data has been exported as JSON backup.');
+    } catch (error) {
+        notify('Failed to export backup: ' + error.message);
+    }
+}
 document.addEventListener('click', (event) => {
     const button = event.target.closest('[data-action]');
     if (event.target.closest('.close-dialog')) event.target.closest('dialog').close();
@@ -403,6 +428,7 @@ document.addEventListener('click', (event) => {
     const { action, id } = button.dataset;
     const readonly = activeView.startsWith('shared');
     if (action === 'import') { document.querySelector('#backup-file').click(); return; }
+    if (action === 'export-json') { exportJSON(); return; }
     if (readonly && !['share', 'export', 'expand'].includes(action)) return;
     if (action === 'add' || action === 'edit-entry') openEntry(id);
     if (action === 'edit-topic' || action === 'add-topic') openTopic(id);
