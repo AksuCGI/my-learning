@@ -150,6 +150,26 @@
                 <label><span class="field-label">Duration (minutes)</span><input name="duration" type="number" min="5"
                         max="1440" step="5" value="60" required></label>
             </div>
+            <div class="form-grid">
+                <label>Repeat<select name="repeat">
+                        <option value="none">Does not repeat</option>
+                        <option value="daily">Daily</option>
+                        <option value="weekly">Weekly</option>
+                        <option value="monthly">Monthly</option>
+                        <option value="yearly">Yearly</option>
+                        <option value="custom">Custom</option>
+                    </select></label>
+                <label id="repeat-end-label" hidden>Repeat end date<input name="repeatEnd" type="date" disabled></label>
+            </div>
+            <div id="repeat-custom-fields" class="form-grid" hidden>
+                <label>Repeat start date<input name="repeatStart" type="date" disabled></label>
+                <label>Repeat frequency<select name="repeatFrequency" disabled>
+                        <option value="daily">Daily</option>
+                        <option value="weekly">Weekly</option>
+                        <option value="monthly">Monthly</option>
+                        <option value="yearly">Yearly</option>
+                    </select></label>
+            </div>
             <label>Notes<textarea name="notes" rows="3"
                     placeholder="Resources, preparation, or a specific next step"></textarea></label>
             <div class="dialog-actions"><button type="button"

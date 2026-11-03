@@ -215,6 +215,34 @@ function endTime(block) {
 function validBlock(block, topics) {
     return block && typeof block.id === 'string' && ['learning', 'task', 'meeting'].includes(block.kind) && typeof block.title === 'string' && typeof block.notes === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(block.date) && /^([01]\d|2[0-3]):[0-5]\d$/.test(block.start) && Number.isInteger(block.duration) && block.duration > 0 && timeMinutes(block.start) + block.duration <= 1440 && ['planned', 'done'].includes(block.status) && (block.kind !== 'learning' || block.topic === '' || topics.some((topic) => topic.id === block.topic));
 }
+function repeatDates(start, end, frequency) {
+    if (!isIsoDate(start) || !isIsoDate(end) || end < start) throw new Error('Repeat end date must be on or after the start date.');
+    if (!['daily', 'weekly', 'monthly', 'yearly'].includes(frequency)) throw new Error('Choose a repeat frequency.');
+    const anchor = new Date(`${start}T12:00:00`);
+    const dates = [];
+    for (let index = 0; ; index += 1) {
+        const date = new Date(anchor);
+        if (frequency === 'daily' || frequency === 'weekly') date.setDate(anchor.getDate() + index * (frequency === 'weekly' ? 7 : 1));
+        else {
+            date.setDate(1);
+            if (frequency === 'monthly') date.setMonth(anchor.getMonth() + index);
+            else date.setFullYear(anchor.getFullYear() + index);
+            const lastDay = new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
+            date.setDate(Math.min(anchor.getDate(), lastDay));
+        }
+        const value = isoDate(date);
+        if (value > end) break;
+        if (index >= 5000) throw new Error('Repeat range is too large. Choose a shorter date range.');
+        if (![0, 6].includes(date.getDay())) dates.push(value);
+    }
+    if (!dates.length) throw new Error('This repeat range has no weekday occurrences.');
+    return dates;
+}
+function scheduledOccurrences(block, values) {
+    if (values.repeat === 'none') return [block];
+    const dates = repeatDates(values.repeat === 'custom' ? values.repeatStart : block.date, values.repeatEnd, values.repeat === 'custom' ? values.repeatFrequency : values.repeat);
+    return dates.map((date, index) => ({ ...block, date, id: index === 0 ? block.id : crypto.randomUUID(), status: index === 0 ? block.status : 'planned', entryId: index === 0 ? block.entryId : '' }));
+}
 function weekBlocks(week = selectedWeek) {
     return state.schedule.filter((block) => block.date >= week && block.date <= addDays(week, 4)).sort((first, second) => `${first.date}${first.start}`.localeCompare(`${second.date}${second.start}`));
 }
@@ -242,7 +270,7 @@ function plannerMarkup() {
     const tasks = blocks.filter((block) => block.kind === 'task').reduce((sum, block) => sum + block.duration, 0);
     const meetings = blocks.filter((block) => block.kind === 'meeting').reduce((sum, block) => sum + block.duration, 0);
     const logged = state.entries.filter((entry) => entry.date >= selectedWeek && entry.date <= addDays(selectedWeek, 4)).reduce((sum, entry) => sum + entry.duration, 0);
-    return `<div class="page-heading"><div><span class="eyebrow">${fiscalLabel()}</span><h1>A week with intention</h1><p class="subtitle">Learning, everyday work, and customer and team conversations.</p></div><div class="heading-actions"><button class="button secondary" data-action="copy-week">Copy to next week ↗</button><button class="button primary" data-action="add-block">+ Add time block</button></div></div><div class="week-toolbar"><div class="week-navigation"><button class="icon-button" data-action="previous-week" aria-label="Previous week" title="Previous week">←</button><h2>${dateLabel(selectedWeek)} – ${dateLabel(addDays(selectedWeek, 4), { day: 'numeric', month: 'short', year: 'numeric' })}</h2><button class="icon-button" data-action="next-week" aria-label="Next week" title="Next week">→</button></div><div class="week-picker"><button class="text-button" data-action="this-week">This week</button><label>Week of<input id="week-date" type="date" value="${selectedWeek}" aria-label="Choose week"></label></div></div><section class="plan-totals" aria-label="Week totals"><span><i class="legend-dot learning-dot"></i><strong>${durationLabel(learning)}</strong> learning scheduled</span><span><i class="legend-dot task-dot"></i><strong>${durationLabel(tasks)}</strong> tasks</span><span><i class="legend-dot meeting-dot"></i><strong>${durationLabel(meetings)}</strong> meetings</span><span><strong>${durationLabel(logged)}</strong> learning logged</span></section><section class="week-grid" aria-label="Weekly schedule">${Array.from({ length: 5 }, (_, index) => {
+    return `<div class="page-heading"><div><span class="eyebrow">${fiscalLabel()}</span><h1>A week with intention</h1><p class="subtitle">Learning, everyday work, and customer and team conversations.</p></div><div class="heading-actions"><button class="button primary" data-action="add-block">+ Add time block</button></div></div><div class="week-toolbar"><div class="week-navigation"><button class="icon-button" data-action="previous-week" aria-label="Previous week" title="Previous week">←</button><h2>${dateLabel(selectedWeek)} – ${dateLabel(addDays(selectedWeek, 4), { day: 'numeric', month: 'short', year: 'numeric' })}</h2><button class="icon-button" data-action="next-week" aria-label="Next week" title="Next week">→</button></div><div class="week-picker"><button class="text-button" data-action="this-week">This week</button><label>Week of<input id="week-date" type="date" value="${selectedWeek}" aria-label="Choose week"></label></div></div><section class="plan-totals" aria-label="Week totals"><span><i class="legend-dot learning-dot"></i><strong>${durationLabel(learning)}</strong> learning scheduled</span><span><i class="legend-dot task-dot"></i><strong>${durationLabel(tasks)}</strong> tasks</span><span><i class="legend-dot meeting-dot"></i><strong>${durationLabel(meetings)}</strong> meetings</span><span><strong>${durationLabel(logged)}</strong> learning logged</span></section><section class="week-grid" aria-label="Weekly schedule">${Array.from({ length: 5 }, (_, index) => {
         const date = addDays(selectedWeek, index);
         const dayBlocks = blocks.filter((block) => block.date === date);
         return `<section class="plan-day ${date === today() ? 'is-today' : ''}"><div class="day-heading"><div><span>${dateLabel(date, { weekday: 'short' })}</span><h2>${dateLabel(date)}</h2></div><button class="icon-button" data-action="add-block" data-date="${date}" aria-label="Add block on ${dateLabel(date)}" title="Add time block">+</button></div><div class="day-blocks">${dayBlocks.map(blockMarkup).join('') || '<p class="day-empty">Room to plan</p>'}</div></section>`;
@@ -265,20 +293,25 @@ function openBlock(id, date, topicId) {
     const blockDate = date || (today() >= selectedWeek && today() <= addDays(selectedWeek, 4) ? today() : selectedWeek);
     const defaults = { id: '', kind: state.topics.length ? 'learning' : 'task', topic: topicId || state.topics[0]?.id || '', title: topicId ? topicById(topicId).name : '', date: blockDate, start: '09:00', duration: 60, notes: '' };
     ['id', 'kind', 'topic', 'title', 'date', 'start', 'duration', 'notes'].forEach((field) => { form.elements[field].value = block?.[field] ?? defaults[field]; });
+    form.elements.repeatStart.value = form.elements.date.value;
+    form.elements.repeatEnd.value = state.fiscalYear.end >= form.elements.date.value ? state.fiscalYear.end : addDays(form.elements.date.value, 365);
     document.querySelector('#schedule-title').textContent = block ? 'Edit or move time block' : 'Plan a time block';
     updateScheduleKind();
+    updateScheduleRepeat();
     document.querySelector('#schedule-dialog').showModal();
 }
-function copyWeek() {
-    const source = weekBlocks().filter((block) => block.kind !== 'task');
-    if (!source.length) { notify('Add learning or meeting blocks before copying this week.'); return; }
-    const copies = source.map((block) => ({ ...block, id: crypto.randomUUID(), date: addDays(block.date, 7), status: 'planned', entryId: '' }));
-    const collision = copies.find((block) => overlappingBlock(block, [...state.schedule, ...copies]));
-    if (collision) { notify(`Cannot copy: a block overlaps on ${dateLabel(collision.date)}. Move it first.`); return; }
-    if (!confirm(`Copy ${copies.length} learning / meeting blocks to next week? Tasks will not be copied.`)) return;
-    state.schedule.push(...copies);
-    selectedWeek = addDays(selectedWeek, 7);
-    const saved = persist(); render(); if (saved) notify('Week copied. Each time block can be adjusted independently.');
+function updateScheduleRepeat() {
+    const form = document.querySelector('#schedule-form');
+    const repeating = form.elements.repeat.value !== 'none';
+    const custom = form.elements.repeat.value === 'custom';
+    document.querySelector('#repeat-end-label').hidden = !repeating;
+    document.querySelector('#repeat-custom-fields').hidden = !custom;
+    for (const [field, enabled] of [['repeatEnd', repeating], ['repeatStart', custom], ['repeatFrequency', custom]]) {
+        form.elements[field].disabled = !enabled;
+        form.elements[field].required = enabled;
+    }
+    form.elements.date.disabled = custom;
+    form.elements.date.required = !custom;
 }
 function render() {
     const route = location.hash.slice(1) || 'dashboard';
@@ -358,7 +391,6 @@ document.addEventListener('click', (event) => {
     if (action === 'add-block' || action === 'edit-block') openBlock(id, button.dataset.date);
     if (action === 'previous-week' || action === 'next-week') { selectedWeek = addDays(selectedWeek, action === 'previous-week' ? -7 : 7); render(); }
     if (action === 'this-week') { selectedWeek = mondayOf(today()); render(); }
-    if (action === 'copy-week') copyWeek();
     if (action === 'complete-learning') openEntry(undefined, id);
     if (action === 'toggle-task') { const block = state.schedule.find((item) => item.id === id); if (block && block.kind !== 'learning') { block.status = block.status === 'done' ? 'planned' : 'done'; const saved = persist(); render(); if (saved) notify(block.status === 'done' ? 'Task completed.' : 'Task reopened.'); } }
     if (action === 'delete-block' && confirm('Remove this time block? Any logged learning entry will be kept.')) { state.schedule = state.schedule.filter((block) => block.id !== id); state.entries.forEach((entry) => { if (entry.scheduleId === id) delete entry.scheduleId; }); const saved = persist(); render(); if (saved) notify('Time block removed. Logged learning is unchanged.'); }
@@ -379,6 +411,8 @@ document.addEventListener('change', (event) => {
     if (['topic-filter', 'sort-order'].includes(event.target.id)) filterTimeline();
     if (event.target.id === 'week-date' && event.target.value) { selectedWeek = mondayOf(event.target.value); render(); }
     if (event.target.matches('#schedule-form [name="kind"]')) updateScheduleKind();
+    if (event.target.matches('#schedule-form [name="repeat"]')) updateScheduleRepeat();
+    if (event.target.matches('#schedule-form [name="date"]')) document.querySelector('#schedule-form').elements.repeatStart.value = event.target.value;
 });
 document.querySelector('#entry-form').addEventListener('submit', (event) => {
     event.preventDefault();
@@ -406,16 +440,22 @@ document.querySelector('#schedule-form').addEventListener('submit', (event) => {
     event.preventDefault();
     const values = Object.fromEntries(new FormData(event.target));
     const previous = state.schedule.find((block) => block.id === values.id);
-    const block = { ...values, id: values.id || crypto.randomUUID(), topic: values.kind === 'learning' ? values.topic : '', title: values.title.trim(), notes: values.notes.trim(), duration: Number(values.duration), status: previous?.status || 'planned', entryId: previous?.entryId || '' };
+    const block = { id: values.id || crypto.randomUUID(), kind: values.kind, topic: values.kind === 'learning' ? values.topic : '', title: values.title.trim(), notes: values.notes.trim(), date: values.repeat === 'custom' ? values.repeatStart : values.date, start: values.start, duration: Number(values.duration), status: previous?.status || 'planned', entryId: previous?.entryId || '' };
     if (!block.title) { notify('Give this time block an activity.'); return; }
-    if ([0, 6].includes(new Date(`${block.date}T12:00:00`).getDay())) { notify('Choose a weekday, Monday to Friday.'); return; }
+    if (values.repeat === 'none' && [0, 6].includes(new Date(`${block.date}T12:00:00`).getDay())) { notify('Choose a weekday, Monday to Friday.'); return; }
     if (!validBlock(block, state.topics)) { notify('Choose a valid date, goal, and duration. Time blocks must end by midnight.'); return; }
     if (previous?.entryId && (previous.kind !== block.kind || previous.topic !== block.topic)) { notify('A logged block must keep its original learning goal. Add a separate block instead.'); return; }
-    const overlap = overlappingBlock(block);
-    if (overlap) { notify(`Overlaps with “${overlap.title}” (${overlap.start}–${endTime(overlap)}). Move or shorten a block first.`); return; }
-    if (previous) state.schedule = state.schedule.map((item) => item.id === block.id ? block : item); else state.schedule.push(block);
-    selectedWeek = mondayOf(block.date);
-    const saved = persist(); document.querySelector('#schedule-dialog').close(); if (activeView !== 'planner') location.hash = 'planner'; else render(); if (saved) notify(previous ? 'Time block updated.' : 'Time set aside. Your block is saved.');
+    let occurrences;
+    try { occurrences = scheduledOccurrences(block, values); }
+    catch (error) { notify(error.message); return; }
+    const remaining = state.schedule.filter((item) => item.id !== block.id);
+    for (const occurrence of occurrences) {
+        const overlap = overlappingBlock(occurrence, remaining);
+        if (overlap) { notify(`Overlaps on ${dateLabel(occurrence.date)} with “${overlap.title}” (${overlap.start}–${endTime(overlap)}). Move or shorten a block first.`); return; }
+    }
+    state.schedule = [...remaining, ...occurrences];
+    selectedWeek = mondayOf(occurrences[0].date);
+    const saved = persist(); document.querySelector('#schedule-dialog').close(); if (activeView !== 'planner') location.hash = 'planner'; else render(); if (saved) notify(occurrences.length > 1 ? `${occurrences.length} time blocks saved.` : previous ? 'Time block updated.' : 'Time set aside. Your block is saved.');
 });
 document.querySelector('#year-form').addEventListener('submit', (event) => {
     event.preventDefault();
