@@ -189,7 +189,7 @@ label:has(> :required:enabled)>.field-label::after {
 }
 
 .meeting-dot {
-    background: #4a8b7b;
+    background: #2874b8;
 }
 
 .week-grid {
@@ -260,9 +260,9 @@ label:has(> :required:enabled)>.field-label::after {
 }
 
 .plan-block.meeting {
-    background: #edf5f2;
-    border-color: #d7e9e3;
-    border-left-color: #4a8b7b;
+    background: #edf5fc;
+    border-color: #d2e4f4;
+    border-left-color: #2874b8;
 }
 
 .plan-block.is-done {
