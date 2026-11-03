@@ -246,9 +246,6 @@ function scheduledOccurrences(block, values) {
 function weekBlocks(week = selectedWeek) {
     return state.schedule.filter((block) => block.date >= week && block.date <= addDays(week, 4)).sort((first, second) => `${first.date}${first.start}`.localeCompare(`${second.date}${second.start}`));
 }
-function overlappingBlock(candidate, blocks = state.schedule) {
-    return blocks.find((block) => block.id !== candidate.id && block.date === candidate.date && timeMinutes(candidate.start) < timeMinutes(block.start) + block.duration && timeMinutes(block.start) < timeMinutes(candidate.start) + candidate.duration);
-}
 function blockMarkup(block) {
     const topic = topicById(block.topic) || { name: 'Unassigned learning' };
     const kind = { learning: 'Learning', task: 'Task', meeting: 'Meeting' }[block.kind];
@@ -449,10 +446,6 @@ document.querySelector('#schedule-form').addEventListener('submit', (event) => {
     try { occurrences = scheduledOccurrences(block, values); }
     catch (error) { notify(error.message); return; }
     const remaining = state.schedule.filter((item) => item.id !== block.id);
-    for (const occurrence of occurrences) {
-        const overlap = overlappingBlock(occurrence, remaining);
-        if (overlap) { notify(`Overlaps on ${dateLabel(occurrence.date)} with “${overlap.title}” (${overlap.start}–${endTime(overlap)}). Move or shorten a block first.`); return; }
-    }
     state.schedule = [...remaining, ...occurrences];
     selectedWeek = mondayOf(occurrences[0].date);
     const saved = persist(); document.querySelector('#schedule-dialog').close(); if (activeView !== 'planner') location.hash = 'planner'; else render(); if (saved) notify(occurrences.length > 1 ? `${occurrences.length} time blocks saved.` : previous ? 'Time block updated.' : 'Time set aside. Your block is saved.');

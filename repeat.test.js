@@ -65,12 +65,33 @@ test('all block kinds repeat independently without logging learning hours', () =
         assert.equal(app.run('parseBackup({ ...state, formatVersion: 1 }).schedule.length'), 3);
     }
 });
-test('a later overlap rejects the entire repeat operation', () => {
+test('a later overlap allows the entire repeat operation', () => {
     const app = journal();
     app.submit(values({ repeat: 'none', date: '2026-11-09' }));
     app.submit(values());
-    assert.equal(app.run('state.schedule.length'), 1);
-    assert.match(app.elements.get('#toast').textContent, /Overlaps/);
+    assert.equal(app.run('state.schedule.length'), 4);
+    assert.equal(app.run('state.schedule.filter(block => block.date === "2026-11-09").length'), 2);
+    assert.equal(app.run('new Set(state.schedule.map(block => block.id)).size'), 4);
+});
+test('several blocks of any kind can fully or partially overlap', () => {
+    const app = journal();
+    app.submit(values({ repeat: 'none', kind: 'task' }));
+    app.submit(values({ repeat: 'none', kind: 'learning', topic: '' }));
+    app.submit(values({ repeat: 'none', kind: 'meeting', start: '09:30' }));
+    assert.equal(app.run('state.schedule.length'), 3);
+    assert.equal(app.run('weekBlocks("2026-11-02").length'), 3);
+    assert.equal(app.run('parseBackup({ ...state, formatVersion: 1 }).schedule.length'), 3);
+    assert.equal(app.run('state.entries.length'), 0);
+});
+test('moving a block into an occupied time preserves both blocks', () => {
+    const app = journal();
+    app.submit(values({ repeat: 'none', title: 'Original' }));
+    app.submit(values({ repeat: 'none', start: '11:00', title: 'Moving' }));
+    const id = app.run('state.schedule[1].id');
+    app.submit(values({ id, repeat: 'none', title: 'Moved', start: '09:30' }));
+    assert.equal(app.run('state.schedule.length'), 2);
+    assert.equal(app.run('state.schedule.find(block => block.title === "Original").start'), '09:00');
+    assert.equal(app.run('state.schedule.find(block => block.title === "Moved").start'), '09:30');
 });
 test('custom start and end dates control the generated range', () => {
     const app = journal();
