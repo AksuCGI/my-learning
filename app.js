@@ -48,7 +48,7 @@ function parseBackup(value) {
         fiscalYear: { start: fiscalYear.start, end: fiscalYear.end },
         topics: value.topics.map((topic) => ({ id: topic.id, name: topic.name, category: topic.category, goal: topic.goal, start: topic.start, priority: topic.priority })),
         entries: value.entries.map((entry) => ({ id: entry.id, scheduleId: entry.scheduleId || '', date: entry.date, duration: entry.duration, topic: entry.topic, ...Object.fromEntries(entryFields.map((field) => [field, entry[field]])) })),
-        schedule: schedule.map((block) => ({ id: block.id, kind: block.kind, topic: block.topic, title: block.title, date: block.date, start: block.start, duration: block.duration, notes: block.notes, status: block.status, entryId: block.entryId || '' })),
+        schedule: schedule.map((block) => ({ id: block.id, kind: block.kind, topic: block.topic, title: block.title, date: block.date, start: block.start, duration: block.duration, notes: block.notes, status: block.status, entryId: block.entryId || '', seriesId: block.seriesId || '', repeat: block.repeat || 'none', repeatEnd: block.repeatEnd || '', repeatStart: block.repeatStart || '', repeatFrequency: block.repeatFrequency || '' })),
     };
     if (!validState(imported)) throw new Error('The backup data is incomplete or inconsistent.');
     return imported;
@@ -246,9 +246,20 @@ function repeatDates(start, end, frequency) {
     return dates;
 }
 function scheduledOccurrences(block, values) {
-    if (values.repeat === 'none') return [block];
+    if (values.repeat === 'none') return [{ ...block, repeat: 'none' }];
     const dates = repeatDates(values.repeat === 'custom' ? values.repeatStart : block.date, values.repeatEnd, values.repeat === 'custom' ? values.repeatFrequency : values.repeat);
-    return dates.map((date, index) => ({ ...block, date, id: index === 0 ? block.id : crypto.randomUUID(), status: index === 0 ? block.status : 'planned', entryId: index === 0 ? block.entryId : '', seriesId: block.id }));
+    return dates.map((date, index) => ({ 
+        ...block, 
+        date, 
+        id: index === 0 ? block.id : crypto.randomUUID(), 
+        status: index === 0 ? block.status : 'planned', 
+        entryId: index === 0 ? block.entryId : '', 
+        seriesId: block.id,
+        repeat: index === 0 ? values.repeat : 'none',
+        repeatEnd: index === 0 ? values.repeatEnd : '',
+        repeatStart: index === 0 && values.repeat === 'custom' ? values.repeatStart : '',
+        repeatFrequency: index === 0 && values.repeat === 'custom' ? values.repeatFrequency : ''
+    }));
 }
 function findBlockSeries(blockId) {
     const block = state.schedule.find((item) => item.id === blockId);
@@ -334,10 +345,10 @@ function openBlock(id, date, topicId, editSeries = false) {
         delete form.dataset.seriesLength;
     }
     
-    const defaults = { id: '', kind: state.topics.length ? 'learning' : 'task', topic: topicId || state.topics[0]?.id || '', title: topicId ? topicById(topicId).name : '', date: blockDate, start: '09:00', duration: 60, notes: '' };
-    ['id', 'kind', 'topic', 'title', 'date', 'start', 'duration', 'notes'].forEach((field) => { form.elements[field].value = block?.[field] ?? defaults[field]; });
-    form.elements.repeatStart.value = form.elements.date.value;
-    form.elements.repeatEnd.value = state.fiscalYear.end >= form.elements.date.value ? state.fiscalYear.end : addDays(form.elements.date.value, 365);
+    const defaults = { id: '', kind: state.topics.length ? 'learning' : 'task', topic: topicId || state.topics[0]?.id || '', title: topicId ? topicById(topicId).name : '', date: blockDate, start: '09:00', duration: 60, notes: '', repeat: 'none', repeatEnd: '', repeatStart: '', repeatFrequency: '' };
+    ['id', 'kind', 'topic', 'title', 'date', 'start', 'duration', 'notes', 'repeat', 'repeatEnd', 'repeatStart', 'repeatFrequency'].forEach((field) => { form.elements[field].value = block?.[field] ?? defaults[field]; });
+    form.elements.repeatStart.value = form.elements.repeatStart.value || form.elements.date.value;
+    form.elements.repeatEnd.value = form.elements.repeatEnd.value || (state.fiscalYear.end >= form.elements.date.value ? state.fiscalYear.end : addDays(form.elements.date.value, 365));
     document.querySelector('#schedule-title').textContent = block ? 'Edit or move time block' : 'Plan a time block';
     updateScheduleKind();
     updateScheduleRepeat();

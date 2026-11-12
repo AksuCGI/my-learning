@@ -168,3 +168,52 @@ test('blank weekly goal submissions do not overwrite the saved reminder', () => 
     app.inputGoals('   ');
     assert.equal(app.run('state.weeklyGoals[selectedWeek]'), 'Finish the prototype');
 });
+
+test('repeating blocks store and preserve their repeat settings', () => {
+    const app = journal();
+    app.submit(values({ repeat: 'weekly', repeatEnd: '2026-11-30' }));
+    const firstBlock = app.run('state.schedule[0]');
+    assert.equal(firstBlock.repeat, 'weekly');
+    assert.equal(firstBlock.repeatEnd, '2026-11-30');
+    assert.equal(firstBlock.repeatStart, '');
+    assert.equal(firstBlock.repeatFrequency, '');
+});
+
+test('custom repeat settings are preserved with start and frequency', () => {
+    const app = journal();
+    app.submit(values({ repeat: 'custom', repeatStart: '2026-11-03', repeatEnd: '2026-11-17', repeatFrequency: 'daily' }));
+    const firstBlock = app.run('state.schedule[0]');
+    assert.equal(firstBlock.repeat, 'custom');
+    assert.equal(firstBlock.repeatStart, '2026-11-03');
+    assert.equal(firstBlock.repeatEnd, '2026-11-17');
+    assert.equal(firstBlock.repeatFrequency, 'daily');
+});
+
+test('non-repeating blocks have repeat set to none', () => {
+    const app = journal();
+    app.submit(values({ repeat: 'none' }));
+    assert.equal(app.run('state.schedule.length'), 1);
+    assert.equal(app.run('state.schedule[0].repeat'), 'none');
+});
+
+test('only first occurrence in series stores repeat settings', () => {
+    const app = journal();
+    app.submit(values({ repeat: 'weekly', repeatEnd: '2026-11-23' }));
+    const blocks = app.run('state.schedule');
+    assert.equal(blocks.length, 4);
+    assert.equal(blocks[0].repeat, 'weekly');
+    assert.equal(blocks[0].repeatEnd, '2026-11-23');
+    assert.equal(blocks[1].repeat, 'none');
+    assert.equal(blocks[1].repeatEnd, '');
+    assert.equal(blocks[2].repeat, 'none');
+    assert.equal(blocks[3].repeat, 'none');
+});
+
+test('backup with repeat settings preserves all fields', () => {
+    const app = journal();
+    app.submit(values({ repeat: 'monthly', repeatEnd: '2027-02-02' }));
+    const backup = app.run('parseBackup({ ...state, formatVersion: 1 })');
+    const firstBlock = backup.schedule[0];
+    assert.equal(firstBlock.repeat, 'monthly');
+    assert.equal(firstBlock.repeatEnd, '2027-02-02');
+});
