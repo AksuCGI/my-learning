@@ -179,6 +179,19 @@
                     class="button primary">Save time block</button></div>
         </form>
     </dialog>
+    <dialog id="series-action-dialog" aria-labelledby="series-action-title">
+        <div class="dialog-heading">
+            <div><span class="eyebrow">REPEATED BLOCK</span>
+                <h2 id="series-action-title">Edit entire series or just this one?</h2>
+            </div><button type="button" class="icon-button close-dialog" aria-label="Close">×</button>
+        </div>
+        <p id="series-action-message" style="margin: 0 0 20px 0;"></p>
+        <div class="dialog-actions">
+            <button type="button" class="button secondary close-dialog">Cancel</button>
+            <button type="button" class="button primary" id="series-action-this-only">This one only</button>
+            <button type="button" class="button primary" id="series-action-all">Entire series</button>
+        </div>
+    </dialog>
     <dialog id="weekly-goal-dialog" aria-labelledby="weekly-goal-title">
         <form id="weekly-goal-form">
             <div class="dialog-heading">

@@ -248,7 +248,13 @@ function repeatDates(start, end, frequency) {
 function scheduledOccurrences(block, values) {
     if (values.repeat === 'none') return [block];
     const dates = repeatDates(values.repeat === 'custom' ? values.repeatStart : block.date, values.repeatEnd, values.repeat === 'custom' ? values.repeatFrequency : values.repeat);
-    return dates.map((date, index) => ({ ...block, date, id: index === 0 ? block.id : crypto.randomUUID(), status: index === 0 ? block.status : 'planned', entryId: index === 0 ? block.entryId : '' }));
+    return dates.map((date, index) => ({ ...block, date, id: index === 0 ? block.id : crypto.randomUUID(), status: index === 0 ? block.status : 'planned', entryId: index === 0 ? block.entryId : '', seriesId: block.id }));
+}
+function findBlockSeries(blockId) {
+    const block = state.schedule.find((item) => item.id === blockId);
+    if (!block) return [];
+    const seriesId = block.seriesId || block.id;
+    return state.schedule.filter((item) => item.seriesId === seriesId || (item.seriesId === '' && item.id === blockId)).sort((first, second) => first.date.localeCompare(second.date));
 }
 function weekBlocks(week = selectedWeek) {
     return state.schedule.filter((block) => block.date >= week && block.date <= addDays(week, 4)).sort((first, second) => `${first.date}${first.start}`.localeCompare(`${second.date}${second.start}`));
@@ -256,7 +262,10 @@ function weekBlocks(week = selectedWeek) {
 function blockMarkup(block) {
     const topic = topicById(block.topic) || { name: 'Unassigned learning' };
     const kind = { learning: 'Learning', task: 'Task', meeting: 'Meeting' }[block.kind];
-    return `<article class="plan-block ${block.kind} ${block.status === 'done' ? 'is-done' : ''}"><div class="block-top"><span>${escapeHtml(block.start)} – ${endTime(block)}</span><div><button class="icon-button" data-action="edit-block" data-id="${escapeHtml(block.id)}" aria-label="Edit ${escapeHtml(block.title)}" title="Edit or move block">${editIcon}</button><button class="icon-button" data-action="delete-block" data-id="${escapeHtml(block.id)}" aria-label="Delete ${escapeHtml(block.title)}" title="Delete time block">×</button></div></div><span class="block-kind">${kind}${block.status === 'done' ? ' · Done' : ''}</span><h3>${escapeHtml(block.title)}</h3>${block.kind === 'learning' ? `<p>${escapeHtml(topic.name)}</p>` : ''}${block.notes ? `<p class="block-notes">${escapeHtml(block.notes)}</p>` : ''}<div class="block-bottom"><span>${durationLabel(block.duration)}</span>${block.kind === 'learning' ? `<button class="text-button" data-action="complete-learning" data-id="${escapeHtml(block.id)}">${block.entryId && state.entries.some((entry) => entry.id === block.entryId) ? 'View entry ↗' : 'Log learning ↗'}</button>` : `<button class="text-button" data-action="toggle-task" data-id="${escapeHtml(block.id)}">${block.status === 'done' ? 'Reopen' : 'Mark done'}</button>`}</div></article>`;
+    const series = findBlockSeries(block.id);
+    const isRepeating = series.length > 1;
+    const seriesBadge = isRepeating ? `<span class="series-badge" title="This block repeats (${series.length} total)">${series.length}×</span>` : '';
+    return `<article class="plan-block ${block.kind} ${block.status === 'done' ? 'is-done' : ''}${isRepeating ? ' is-repeating' : ''}"><div class="block-top"><span>${escapeHtml(block.start)} – ${endTime(block)}</span><div>${seriesBadge}<button class="icon-button" data-action="edit-block" data-id="${escapeHtml(block.id)}" aria-label="Edit ${escapeHtml(block.title)}" title="Edit or move block">${editIcon}</button><button class="icon-button" data-action="delete-block" data-id="${escapeHtml(block.id)}" aria-label="Delete ${escapeHtml(block.title)}" title="Delete time block">×</button></div></div><span class="block-kind">${kind}${block.status === 'done' ? ' · Done' : ''}</span><h3>${escapeHtml(block.title)}</h3>${block.kind === 'learning' ? `<p>${escapeHtml(topic.name)}</p>` : ''}${block.notes ? `<p class="block-notes">${escapeHtml(block.notes)}</p>` : ''}<div class="block-bottom"><span>${durationLabel(block.duration)}</span>${block.kind === 'learning' ? `<button class="text-button" data-action="complete-learning" data-id="${escapeHtml(block.id)}">${block.entryId && state.entries.some((entry) => entry.id === block.entryId) ? 'View entry ↗' : 'Log learning ↗'}</button>` : `<button class="text-button" data-action="toggle-task" data-id="${escapeHtml(block.id)}">${block.status === 'done' ? 'Reopen' : 'Mark done'}</button>`}</div></article>`;
 }
 function weeklyGoalMarkup() {
     const end = addDays(selectedWeek, 4);
@@ -303,14 +312,28 @@ function updateScheduleKind() {
     form.elements.topic.required = learning;
     form.elements.topic.disabled = !learning;
 }
-function openBlock(id, date, topicId) {
+function openBlock(id, date, topicId, editSeries = false) {
     const form = document.querySelector('#schedule-form');
-    const block = state.schedule.find((item) => item.id === id);
+    let block = state.schedule.find((item) => item.id === id);
+    
     if (!state.topics.length && block?.kind === 'learning') { openTopic(); notify('Add your first goal before editing this learning block.'); return; }
     form.reset();
     form.elements.kind.querySelector('[value="learning"]').disabled = !state.topics.length;
     form.elements.topic.innerHTML = state.topics.map((topic) => `<option value="${escapeHtml(topic.id)}">${escapeHtml(topic.name)}</option>`).join('');
     const blockDate = date || (today() >= selectedWeek && today() <= addDays(selectedWeek, 4) ? today() : selectedWeek);
+    
+    if (editSeries && id) {
+        const series = findBlockSeries(id);
+        if (series.length > 1) {
+            block = series[0];
+            form.dataset.editSeriesId = id;
+            form.dataset.seriesLength = series.length;
+        }
+    } else {
+        delete form.dataset.editSeriesId;
+        delete form.dataset.seriesLength;
+    }
+    
     const defaults = { id: '', kind: state.topics.length ? 'learning' : 'task', topic: topicId || state.topics[0]?.id || '', title: topicId ? topicById(topicId).name : '', date: blockDate, start: '09:00', duration: 60, notes: '' };
     ['id', 'kind', 'topic', 'title', 'date', 'start', 'duration', 'notes'].forEach((field) => { form.elements[field].value = block?.[field] ?? defaults[field]; });
     form.elements.repeatStart.value = form.elements.date.value;
@@ -434,14 +457,66 @@ document.addEventListener('click', (event) => {
     if (action === 'edit-topic' || action === 'add-topic') openTopic(id);
     if (action === 'log-topic') { openEntry(); document.querySelector('#entry-form').elements.topic.value = id; }
     if (action === 'plan-topic') openBlock(undefined, undefined, id);
-    if (action === 'add-block' || action === 'edit-block') openBlock(id, button.dataset.date);
+    if (action === 'add-block') openBlock(undefined, button.dataset.date);
+    if (action === 'edit-block') {
+        const block = state.schedule.find((item) => item.id === id);
+        const series = findBlockSeries(id);
+        if (series.length > 1 && !button.dataset.seriesAction) {
+            const message = document.querySelector('#series-action-message');
+            message.textContent = `This block repeats ${series.length} times. Would you like to edit just this occurrence or the entire series?`;
+            document.querySelector('#series-action-all').onclick = () => {
+                document.querySelector('#series-action-dialog').close();
+                button.dataset.seriesAction = 'all';
+                openBlock(id, button.dataset.date, undefined, true);
+            };
+            document.querySelector('#series-action-this-only').onclick = () => {
+                document.querySelector('#series-action-dialog').close();
+                openBlock(id, button.dataset.date);
+            };
+            document.querySelector('#series-action-dialog').showModal();
+        } else {
+            openBlock(id, button.dataset.date);
+        }
+    }
     if (action === 'add-weekly-goal' || action === 'edit-weekly-goal') openWeeklyGoal();
     if (action === 'delete-weekly-goal' && confirm('Delete this week’s goal?')) { const saved = saveWeeklyGoals(''); render(); if (saved) notify('Weekly goal deleted.'); }
     if (action === 'previous-week' || action === 'next-week') { selectedWeek = addDays(selectedWeek, action === 'previous-week' ? -7 : 7); render(); }
     if (action === 'this-week') { selectedWeek = mondayOf(today()); render(); }
     if (action === 'complete-learning') openEntry(undefined, id);
     if (action === 'toggle-task') { const block = state.schedule.find((item) => item.id === id); if (block && block.kind !== 'learning') { block.status = block.status === 'done' ? 'planned' : 'done'; const saved = persist(); render(); if (saved) notify(block.status === 'done' ? 'Task completed.' : 'Task reopened.'); } }
-    if (action === 'delete-block' && confirm('Remove this time block? Any logged learning entry will be kept.')) { state.schedule = state.schedule.filter((block) => block.id !== id); state.entries.forEach((entry) => { if (entry.scheduleId === id) delete entry.scheduleId; }); const saved = persist(); render(); if (saved) notify('Time block removed. Logged learning is unchanged.'); }
+    if (action === 'delete-block') { 
+        const block = state.schedule.find((item) => item.id === id);
+        const series = findBlockSeries(id);
+        if (series.length > 1) {
+            const message = document.querySelector('#series-action-message');
+            message.textContent = `This block repeats ${series.length} times. Would you like to delete just this occurrence or the entire series?`;
+            document.querySelector('#series-action-all').onclick = () => {
+                series.forEach((b) => {
+                    state.schedule = state.schedule.filter((item) => item.id !== b.id);
+                    state.entries.forEach((entry) => { if (entry.scheduleId === b.id) delete entry.scheduleId; });
+                });
+                const saved = persist();
+                document.querySelector('#series-action-dialog').close();
+                render();
+                if (saved) notify(`Deleted ${series.length} time blocks. Logged learning is unchanged.`);
+            };
+            document.querySelector('#series-action-this-only').onclick = () => {
+                state.schedule = state.schedule.filter((item) => item.id !== id);
+                state.entries.forEach((entry) => { if (entry.scheduleId === id) delete entry.scheduleId; });
+                const saved = persist();
+                document.querySelector('#series-action-dialog').close();
+                render();
+                if (saved) notify('Time block removed. Logged learning is unchanged.');
+            };
+            document.querySelector('#series-action-dialog').showModal();
+        } else if (confirm('Remove this time block? Any logged learning entry will be kept.')) {
+            state.schedule = state.schedule.filter((item) => item.id !== id);
+            state.entries.forEach((entry) => { if (entry.scheduleId === id) delete entry.scheduleId; });
+            const saved = persist();
+            render();
+            if (saved) notify('Time block removed. Logged learning is unchanged.');
+        }
+    }
     if (action === 'edit-year') { const form = document.querySelector('#year-form'); form.elements.start.value = state.fiscalYear.start; form.elements.end.value = state.fiscalYear.end; form.elements.end.setCustomValidity(''); document.querySelector('#year-dialog').showModal(); }
     if (action === 'share') location.hash = 'shared';
     if (action === 'export') exportSnapshot();
@@ -495,20 +570,41 @@ document.querySelector('#topic-form').addEventListener('submit', (event) => {
 document.querySelector('#year-form').addEventListener('input', (event) => event.currentTarget.elements.end.setCustomValidity(''));
 document.querySelector('#schedule-form').addEventListener('submit', (event) => {
     event.preventDefault();
-    const values = Object.fromEntries(new FormData(event.target));
+    const form = event.target;
+    const values = Object.fromEntries(new FormData(form));
+    const editSeriesId = form.dataset?.editSeriesId || '';
+    const seriesLength = Number(form.dataset?.seriesLength) || 1;
+    
     const previous = state.schedule.find((block) => block.id === values.id);
     const block = { id: values.id || crypto.randomUUID(), kind: values.kind, topic: values.kind === 'learning' ? values.topic : '', title: values.title.trim(), notes: values.notes.trim(), date: values.repeat === 'custom' ? values.repeatStart : values.date, start: values.start, duration: Number(values.duration), status: previous?.status || 'planned', entryId: previous?.entryId || '' };
     if (!block.title) { notify('Give this time block an activity.'); return; }
     if (values.repeat === 'none' && [0, 6].includes(new Date(`${block.date}T12:00:00`).getDay())) { notify('Choose a weekday, Monday to Friday.'); return; }
     if (!validBlock(block, state.topics)) { notify('Choose a valid date, goal, and duration. Time blocks must end by midnight.'); return; }
     if (previous?.entryId && (previous.kind !== block.kind || previous.topic !== block.topic)) { notify('A logged block must keep its original learning goal. Add a separate block instead.'); return; }
+    
     let occurrences;
     try { occurrences = scheduledOccurrences(block, values); }
     catch (error) { notify(error.message); return; }
-    const remaining = state.schedule.filter((item) => item.id !== block.id);
-    state.schedule = [...remaining, ...occurrences];
-    selectedWeek = mondayOf(occurrences[0].date);
-    const saved = persist(); document.querySelector('#schedule-dialog').close(); if (activeView !== 'planner') location.hash = 'planner'; else render(); if (saved) notify(occurrences.length > 1 ? `${occurrences.length} time blocks saved.` : previous ? 'Time block updated.' : 'Time set aside. Your block is saved.');
+    
+    if (editSeriesId) {
+        const series = findBlockSeries(editSeriesId);
+        state.schedule = state.schedule.filter((item) => !series.includes(item));
+        state.schedule = [...state.schedule, ...occurrences];
+        delete form.dataset.editSeriesId;
+        delete form.dataset.seriesLength;
+        const saved = persist();
+        document.querySelector('#schedule-dialog').close();
+        if (activeView !== 'planner') location.hash = 'planner'; else render();
+        if (saved) notify(`Entire series updated (${occurrences.length} time blocks).`);
+    } else {
+        const remaining = state.schedule.filter((item) => item.id !== block.id);
+        state.schedule = [...remaining, ...occurrences];
+        selectedWeek = mondayOf(occurrences[0].date);
+        const saved = persist();
+        document.querySelector('#schedule-dialog').close();
+        if (activeView !== 'planner') location.hash = 'planner'; else render();
+        if (saved) notify(occurrences.length > 1 ? `${occurrences.length} time blocks saved.` : previous ? 'Time block updated.' : 'Time set aside. Your block is saved.');
+    }
 });
 document.querySelector('#year-form').addEventListener('submit', (event) => {
     event.preventDefault();
